@@ -269,7 +269,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--samples-per-image",
         type=int,
-        default=500,
+        default=200,
         help="Сколько примеров генерировать на одну спутниковую карту.",
     )
     parser.add_argument(
