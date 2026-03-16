@@ -8,6 +8,7 @@ import numpy as np
 
 from create_dataset import NavigationDataset
 from network_training import AzimuthNet
+from network_training_attention import AzimuthNetAttention
 
 
 def parse_args():

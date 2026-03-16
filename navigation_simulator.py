@@ -9,6 +9,7 @@ import torchvision.transforms as T
 
 from create_dataset import NavigationDataset
 from network_training import AzimuthNet
+from network_training_attention import AzimuthNetAttention
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,6 +107,14 @@ def parse_args() -> argparse.Namespace:
         "--manual-placement",
         action="store_true",
         help="Enable manual placement mode: click to place current and target tiles before simulation starts.",
+    )
+    parser.add_argument(
+        "--use-attention",
+        action="store_true",
+        help=(
+            "Use AzimuthNetAttention (map encoder with attention pooling) and load its weights "
+            "instead of the base AzimuthNet."
+        ),
     )
     return parser.parse_args()
 
@@ -457,7 +466,12 @@ def main() -> None:
     base_bgr = tensor_to_bgr(sat_img_t)
 
     # Load model
-    model = AzimuthNet().to(device)
+    if args.use_attention:
+        print("Using attention-based model: AzimuthNetAttention")
+        model = AzimuthNetAttention().to(device)
+    else:
+        print("Using base model: AzimuthNet")
+        model = AzimuthNet().to(device)
     state = torch.load(args.model_path, map_location=device)
     model.load_state_dict(state)
     model.eval()
