@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class TileEncoder(nn.Module):
     """
-    Простая CNN‑сетка, кодирующая тайл 200x200 в вектор признаков.
+    Кодирует тайл 200x200 в вектор признаков.
     """
 
     def __init__(self, in_channels: int = 3, base_channels: int = 32):
@@ -32,7 +32,7 @@ class TileEncoder(nn.Module):
 
 class MapEncoder(nn.Module):
     """
-    Кодирует crop карты (например, 1000x1000) в пространственную карту признаков (B, C, H, W),
+    Кодирует crop карты (например, 2000x2000) в пространственную карту признаков (B, C, H, W),
     без глобального pooling — чтобы по HxW можно было строить heatmap.
     """
 
@@ -60,16 +60,21 @@ class MapEncoder(nn.Module):
         return self.net(x)
 
 
-class CurLocalizationNet(nn.Module):
+class TileLocalizationNet(nn.Module):
     """
-    Модель, которая по (map_crop, cur_tile) выдаёт распределение вероятностей по карте,
-    где может находиться CUR (heatmap над HxW).
+    Универсальная локализация тайла на карте:
 
-    Вариант реализации:
-      1) MapEncoder -> карта признаков (B, C, H, W)
-      2) TileEncoder(cur) -> вектор (B, C)
-      3) Косинусное сходство query (cur_vec) с каждым spatial‑вектором карты
-      4) Softmax по всем H*W -> нормализованная heatmap.
+    Вход:
+      - map_crop: (B, 3, H, W)
+      - query_tile: (B, 3, h, w)
+
+    Выход:
+      - logits: (B, 1, Hf, Wf) — логиты по spatial‑позициям (softmax применять в лоссе/визуализации)
+
+    Идея та же, что в cur_localization_net.py:
+      map_encoder(map) -> (B, C, Hf, Wf)
+      tile_encoder(tile) -> (B, C)
+      logits_ij = <tile_vec, map_feat_ij>
     """
 
     def __init__(
@@ -82,49 +87,36 @@ class CurLocalizationNet(nn.Module):
         super().__init__()
         self.map_encoder = MapEncoder(map_channels, base_channels)
         self.tile_encoder = TileEncoder(tile_channels, base_channels)
-        # Similarity temperature (lower -> sharper softmax). Keep as buffer so it moves with .to(device).
         self.register_buffer("temperature", torch.tensor(float(temperature)))
 
-    def forward(self, sat_img: torch.Tensor, cur_tile: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            sat_img: (B, 3, H, W) — crop карты
-            cur_tile: (B, 3, h, w) — вырезанный тайл CUR
-
-        Returns:
-            logits: (B, 1, H_feat, W_feat) — "сырые" логиты по карте, без softmax.
-        """
-        map_feat = self.map_encoder(sat_img)  # (B, C, Hf, Wf)
+    def forward(self, map_crop: torch.Tensor, query_tile: torch.Tensor) -> torch.Tensor:
+        map_feat = self.map_encoder(map_crop)  # (B, C, Hf, Wf)
         b, c, hf, wf = map_feat.shape
         n = hf * wf
 
-        cur_vec = self.tile_encoder(cur_tile)  # (B, C)
-
-        # Cosine similarity tends to be more stable than raw dot-product.
+        tile_vec = self.tile_encoder(query_tile)  # (B, C)
         map_flat = map_feat.view(b, c, n)  # (B, C, N)
         map_flat = F.normalize(map_flat, dim=1, eps=1e-6)
-        cur_vec = F.normalize(cur_vec, dim=1, eps=1e-6)
-        scores = torch.bmm(cur_vec.unsqueeze(1), map_flat).squeeze(1)  # (B, N)
+        tile_vec = F.normalize(tile_vec, dim=1, eps=1e-6)
+        scores = torch.bmm(tile_vec.unsqueeze(1), map_flat).squeeze(1)  # (B, N)
         scores = scores / torch.clamp(self.temperature, min=1e-6)
-
-        # Возвращаем логиты, softmax будет применён в лоссе / при визуализации.
         logits = scores.view(b, 1, hf, wf)
         return logits
 
 
-def build_localization_transforms():
+def build_tile_localization_transforms():
     """
-    Нормализация такая же, как в других сетках (ImageNet‑подобная).
+    Нормализация такая же, как в остальных моделях.
     """
     from torchvision import transforms as T
 
     normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     to_tensor = T.ToTensor()
 
-    def transform_pair(sat_img, cur_tile):
-        sat = normalize(to_tensor(sat_img))
-        cur = normalize(to_tensor(cur_tile))
-        return sat, cur
+    def transform_pair(map_crop, query_tile):
+        m = normalize(to_tensor(map_crop))
+        t = normalize(to_tensor(query_tile))
+        return m, t
 
     return transform_pair
 

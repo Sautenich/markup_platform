@@ -1,12 +1,21 @@
 # Dir_NN — navigation / azimuth networks + visualizations
 
+This README is **bilingual**: English first, then a full Russian version.
+
+---
+
+## English
+
+### Project overview
+
 This repo contains a few small PyTorch models for learning navigation signals from satellite map crops:
 
 - **Azimuth prediction**: given a map crop + a **current** tile + a **target** tile, predict the direction (azimuth) from current to target as `(cos θ, sin θ)`.
 - **Trajectory azimuth**: given **previous tiles** + current tile + target tile, predict the same direction.
 - **CUR localization heatmap**: given a map crop + the **CUR** tile, predict a **probability heatmap** over the map crop of where CUR is located.
+- **Tile localization on lower/upper parts**: given a big map crop + a query tile, predict a heatmap over the crop for where that tile is.
 
-It also includes multiple visualization scripts (OpenCV overlays, interactive viewers).
+There are also multiple visualization and navigation scripts (OpenCV overlays, interactive viewers).
 
 ---
 
@@ -37,20 +46,30 @@ pip install torch torchvision numpy pandas pillow opencv-python tqdm
 - `cur_localization_net.py`: `CurLocalizationNet` (map + cur → **logits heatmap**).
 - `cur_localization_training.py`: train script for `CurLocalizationNet`.
 
+Lower / upper tile localization:
+
+- `create_lower_part_dataset.py`: build `dataset/annotations_lower_tar.csv` from lower part of `big_sample5_17.tif`.
+- `create_upper_part_dataset.py`: build `dataset/annotations_val_upper_part.csv` from upper part of `big_sample5_17.tif`.
+- `tile_localization_net.py`: `TileLocalizationNet` (map crop + tile → logits heatmap).
+- `tile_localization_training_lower.py`: train `TileLocalizationNet` on `annotations_lower_tar.csv`.
+- `visualize_tile_localization_heatmap_lower.py`: visualize heatmap for TAR-only dataset.
+- `navigate_upper_heatmap.py`: interactive 200x200 window navigation with live heatmap.
+
 Visualizations:
 
 - `network_visualization.py`: visualize azimuth prediction (baseline model) on a sample.
 - `network_visualization_rgb.py`: same, for `dataset_rgb`.
 - `visualize_manual_interest_dataset.py`: interactive viewer for manual-interest trajectory CSV (prev tiles + cur + tar).
-- `visualize_attention_manual_interest_traj.py`: interactive viewer that runs **AzimuthNetAttention** on a manual-interest trajectory CSV and overlays prediction.
 - `visualize_cur_localization_heatmap.py`: render CUR-localization heatmap overlay image (JET heatmap + CUR box).
 
 Data:
 
 - `dataset/annotations.csv`: main annotations for azimuth models (with `split` column).
 - `dataset/annotations_manual_interest_traj.csv`: manual-interest trajectory annotations (crop + prev tiles + cur + tar).
+- `dataset/annotations_lower_tar.csv`: TAR-only dataset from lower part of `big_sample5_17.tif`.
+- `dataset/annotations_val_upper_part.csv`: TAR-only dataset from upper part of `big_sample5_17.tif`.
 - `dataset/satellite_maps/`: source maps for `annotations.csv` (the dataset loader resolves `.tif/.jpg/.png/...`).
-- `big_sample5_17.tif`: large source image used by the manual-interest trajectory CSVs.
+- `big_sample5_17.tif`: large source image used by manual-interest and lower/upper-part datasets.
 
 ---
 
@@ -122,6 +141,7 @@ python network_training_trajectory.py \
 ### C) Train CUR localization heatmap (map + cur → heatmap)
 
 This trains `CurLocalizationNet` to put high probability mass near the ground-truth `cur_xy`.
+Current setup uses **cosine similarity + temperature** in the model, and a **Gaussian soft-target + KL loss** (more stable than one-hot cross-entropy on a coarse feature grid).
 
 ```bash
 python cur_localization_training.py \
@@ -129,6 +149,31 @@ python cur_localization_training.py \
   --map-dir dataset/satellite_maps \
   --batch-size 8 \
   --epochs 20 \
+  --lr 1e-3 \
+  --save-path cur_localization_net.pt
+```
+
+**If you hit CUDA OOM (common on 4GB GPUs)**, try smaller batch / fewer workers:
+
+```bash
+python cur_localization_training.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --batch-size 2 \
+  --num-workers 0 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path cur_localization_net.pt
+```
+
+Or run a quick debug epoch on CPU:
+
+```bash
+python cur_localization_training.py \
+  --device cpu \
+  --batch-size 4 \
+  --num-workers 0 \
+  --epochs 1 \
   --lr 1e-3 \
   --save-path cur_localization_net.pt
 ```
@@ -203,11 +248,70 @@ python visualize_cur_localization_heatmap.py \
   --save-path viz_cur_heatmap.png
 ```
 
-The output image:
+### 5) Interactive navigation with CUR-localization heatmap (move tile window)
 
-- satellite crop in the background
-- JET heatmap overlay of predicted CUR distribution
-- green rectangle: ground-truth CUR tile
+This simulates an “agent view”: you move a `tile_size x tile_size` window over a **fixed** map crop, and the model predicts a heatmap over the whole crop for where it thinks CUR is.
+
+```bash
+python navigate_cur_heatmap.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --split test \
+  --model-path cur_localization_net.pt \
+  --index 0 \
+  --step 200
+```
+
+Controls:
+
+- `W/S` or `Up/Down`: move vertically
+- `A/D` or `Left/Right`: move horizontally
+- `R`: reset window to GT CUR
+- `Q` / `Esc`: quit
+
+> Tip: click the OpenCV window once to ensure it has keyboard focus.
+
+### 6) Visualize lower-part tile localization heatmap
+
+```bash
+python visualize_tile_localization_heatmap_lower.py \
+  --annotations dataset/annotations_lower_tar.csv \
+  --big-image big_sample5_17.tif \
+  --model-path tile_localization_lower_tar.pt \
+  --index 0 \
+  --save-path viz_tile_lower_heatmap.png
+```
+
+---
+
+## Train tile localization (lower-part TAR-only heatmap)
+
+Train `TileLocalizationNet` on `dataset/annotations_lower_tar.csv`:
+
+```bash
+python tile_localization_training_lower.py \
+  --annotations dataset/annotations_lower_tar.csv \
+  --big-image big_sample5_17.tif \
+  --map-size 2000 \
+  --tile-size 200 \
+  --batch-size 4 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path tile_localization_lower_tar.pt
+```
+
+If you hit OOM, reduce `--batch-size` to `1-2` and set `--num-workers 0`.
+
+### 7) Interactive navigation with heatmap (upper part)
+
+```bash
+python navigate_upper_heatmap.py \
+  --annotations dataset/annotations_val_upper_part.csv \
+  --big-image big_sample5_17.tif \
+  --model-path tile_localization_lower_tar.pt \
+  --index 0 \
+  --step 200
+```
 
 ---
 
@@ -226,6 +330,26 @@ Train first and pass the correct `--model-path`.
 
 Use the “save image” visualizers (`network_visualization.py`, `visualize_cur_localization_heatmap.py`) instead of interactive ones,
 or ensure your environment supports GUI windows.
+
+### Interactive window “keys don’t work”
+
+- Click the OpenCV window once (it needs focus)
+- Use `W/A/S/D` (always supported); arrow keys may depend on your OS/window manager
+
+### Stop a stuck script / kill processes
+
+Find processes:
+
+```bash
+ps aux | grep -E "navigate_cur_heatmap.py|navigate_upper_heatmap.py|cur_localization_training.py|tile_localization_training_lower.py|nvtop" | grep -v grep
+```
+
+Stop by PID:
+
+```bash
+kill <PID>      # gentle
+kill -9 <PID>   # force
+```
 
 ---
 
@@ -250,4 +374,296 @@ python cur_localization_training.py --annotations dataset/annotations.csv --map-
 python visualize_cur_localization_heatmap.py --annotations dataset/annotations.csv --map-dir dataset/satellite_maps --model-path cur_localization_net.pt --index 0 --save-path viz_cur_heatmap.png
 ```
 
+---
+
+## Notes on generated artifacts (checkpoints, images)
+
+Many scripts write **large binary artifacts** (e.g. `*.pt`) and **visualization outputs** (`*.png`). If you’re collaborating via git, it’s usually best to **avoid committing** training checkpoints and generated images unless you explicitly want them versioned (consider using Git LFS for large files).
+
+---
+
+## Русский
+
+### Обзор проекта
+
+Этот репозиторий содержит несколько небольших моделей на PyTorch для обучения навигационным сигналам по спутниковым картам (crop’ам):
+
+- **Предсказание азимута**: по crop’у карты + тайл **CUR** + тайл **TAR** предсказать направление от CUR к TAR как `(cos θ, sin θ)`.
+- **Азимут по траектории**: по **предыдущим** тайлам + CUR + TAR предсказать направление `(cos θ, sin θ)`.
+- **Тепловая карта локализации CUR**: по crop’у карты + тайлу CUR предсказать **heatmap вероятностей**, где находится CUR внутри crop’а.
+- **Локализация тайла (нижняя/верхняя часть большого изображения)**: по большому crop’у + query-тайлу предсказать heatmap, где находится этот тайл.
+
+Также есть скрипты визуализации и интерактивной навигации (OpenCV-окна, оверлеи).
+
+---
+
+## Требования
+
+Ожидается:
+
+- Python 3.10+ (3.11 тоже подходит)
+- PyTorch + torchvision
+- Базовые библиотеки: `numpy`, `pandas`, `Pillow`, `opencv-python`, `tqdm`
+
+Быстрая установка (пример):
+
+```bash
+pip install torch torchvision numpy pandas pillow opencv-python tqdm
+```
+
+> Если нужна CUDA, ставьте соответствующую сборку PyTorch под вашу систему.
+
+---
+
+## Структура репозитория (в общих чертах)
+
+- `create_dataset.py`: генератор датасета + `NavigationDataset` для азимутных моделей и локализации.
+- `network_training.py`: базовая модель азимута (map + cur + tar → `(cos,sin)`).
+- `network_training_attention.py`: модель азимута с **attention pooling** по карте.
+- `network_training_trajectory.py`: модель по траектории (prev tiles + cur + tar → `(cos,sin)`).
+- `cur_localization_net.py`: `CurLocalizationNet` (map + cur → **logits heatmap**).
+- `cur_localization_training.py`: обучение `CurLocalizationNet`.
+
+Локализация тайла по нижней/верхней части большого изображения:
+
+- `create_lower_part_dataset.py`: сформировать `dataset/annotations_lower_tar.csv` (нижняя часть `big_sample5_17.tif`).
+- `create_upper_part_dataset.py`: сформировать `dataset/annotations_val_upper_part.csv` (верхняя часть `big_sample5_17.tif`).
+- `tile_localization_net.py`: `TileLocalizationNet` (map crop + tile → logits heatmap).
+- `tile_localization_training_lower.py`: обучение `TileLocalizationNet` на `annotations_lower_tar.csv`.
+- `visualize_tile_localization_heatmap_lower.py`: визуализация heatmap для TAR-only датасета.
+- `navigate_upper_heatmap.py`: интерактивная навигация по окну 200x200 с “живой” heatmap.
+
+Визуализации:
+
+- `network_visualization.py`: визуализация предсказания азимута (baseline) для одного примера.
+- `network_visualization_rgb.py`: аналогично, но для `dataset_rgb`.
+- `visualize_manual_interest_dataset.py`: интерактивный просмотр trajectory CSV (prev tiles + cur + tar).
+- `visualize_cur_localization_heatmap.py`: сохранение PNG-оверлея heatmap локализации CUR (JET + рамка CUR).
+
+Данные:
+
+- `dataset/annotations.csv`: основные аннотации для азимутных моделей (есть `split`).
+- `dataset/annotations_manual_interest_traj.csv`: trajectory-аннотации “manual-interest”.
+- `dataset/annotations_lower_tar.csv`: TAR-only датасет (нижняя часть `big_sample5_17.tif`).
+- `dataset/annotations_val_upper_part.csv`: TAR-only датасет (верхняя часть `big_sample5_17.tif`).
+- `dataset/satellite_maps/`: исходные карты для `annotations.csv`.
+- `big_sample5_17.tif`: большое исходное изображение для “manual-interest” и lower/upper-part датасетов.
+
+---
+
+## Форматы датасетов
+
+### 1) `dataset/annotations.csv` (для `NavigationDataset`)
+
+CSV создаётся `create_dataset.py`. Каждая строка описывает `map_id` и квадратный crop (обычно `1000x1000`) внутри карты.
+
+Ключевые колонки:
+
+- `map_id`: имя файла карты без расширения
+- `map_crop_x`, `map_crop_y`: левый верхний угол crop’а в пикселях
+- `cur_tile_x`, `cur_tile_y`: центр CUR **внутри crop’а**
+- `tar_tile_x`, `tar_tile_y`: центр TAR **внутри crop’а**
+- `vector_dx`, `vector_dy`: TAR - CUR (в пикселях)
+- `split`: `train` / `val` / `test`
+
+`NavigationDataset` возвращает:
+
+- `sat_img`: тензор crop’а `(3, 1000, 1000)` (по умолчанию)
+- `cur_tile`, `tar_tile`: тензоры тайлов `(3, 200, 200)` (по умолчанию)
+- `labels` (dict):
+  - `cur_xy`: координаты CUR, нормированные в `[0,1]`
+  - `tar_xy`: координаты TAR, нормированные в `[0,1]`
+  - `vector`: `(dx,dy)`
+
+### 2) `dataset/annotations_manual_interest_traj.csv`
+
+Trajectory-CSV из `create_manual_interest_trajectory.py`. Используется **большое** изображение (обычно `big_sample5_17.tif`) и crop (обычно `2000x2000`) внутри него.
+
+Ключевые колонки:
+
+- `map_crop_x`, `map_crop_y`: левый верхний угол crop’а в большом изображении
+- `cur_tile_x`, `cur_tile_y`, `tar_tile_x`, `tar_tile_y`: центры внутри crop’а
+- `prev1_tile_x/y` … `prev4_tile_x/y`: опциональные предыдущие центры
+- `vector_dx`, `vector_dy`: TAR - CUR (в пикселях)
+
+---
+
+## Обучение
+
+### A) Обучить AzimuthNetAttention (map + cur + tar → azimuth)
+
+```bash
+python network_training_attention.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --batch-size 8 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path azimuth_net_attention.pt
+```
+
+### B) Обучить TrajectoryNet (prev tiles + cur + tar → azimuth)
+
+Используется big-изображение (обычно `big_sample5_17.tif`) и trajectory CSV:
+
+```bash
+python network_training_trajectory.py \
+  --annotations dataset/annotations_manual_interest_traj.csv \
+  --map-image big_sample5_17.tif \
+  --batch-size 8 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path azimuth_net_trajectory.pt
+```
+
+### C) Обучить heatmap локализации CUR (map + cur → heatmap)
+
+`CurLocalizationNet` обучается складывать высокую вероятность рядом с ground-truth `cur_xy`.
+Текущая версия использует **cosine similarity + temperature** в модели и **Gaussian soft-target + KL** в лоссе (обычно стабильнее, чем one-hot CE на грубой feature‑сетке).
+
+```bash
+python cur_localization_training.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --batch-size 8 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path cur_localization_net.pt
+```
+
+**Если ловите CUDA OOM (часто на 4GB GPU)**, уменьшите batch и воркеры:
+
+```bash
+python cur_localization_training.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --batch-size 2 \
+  --num-workers 0 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path cur_localization_net.pt
+```
+
+Либо для быстрой отладки запустите 1 эпоху на CPU:
+
+```bash
+python cur_localization_training.py \
+  --device cpu \
+  --batch-size 4 \
+  --num-workers 0 \
+  --epochs 1 \
+  --lr 1e-3 \
+  --save-path cur_localization_net.pt
+```
+
+---
+
+## Визуализации
+
+### 1) Baseline азимут (один пример, сохранить PNG)
+
+```bash
+python network_visualization.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --model-path azimuth_net.pt \
+  --index 0 \
+  --save-path viz_example.png
+```
+
+Смысл оверлея:
+
+- зелёная рамка: CUR
+- жёлтая рамка: TAR
+- красная стрелка: предсказанное направление от CUR
+
+### 2) Интерактивный просмотр trajectory CSV (без модели)
+
+```bash
+python visualize_manual_interest_dataset.py \
+  --input-image big_sample5_17.tif \
+  --annotations dataset/annotations_manual_interest_traj.csv
+```
+
+Управление:
+
+- `R`: следующий пример
+- `E`: предыдущий пример
+- `Q` / `Esc`: выход
+
+### 3) Heatmap локализации CUR (сохранить PNG-оверлей)
+
+```bash
+python visualize_cur_localization_heatmap.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --model-path cur_localization_net.pt \
+  --index 0 \
+  --save-path viz_cur_heatmap.png
+```
+
+### 4) Интерактивная навигация с heatmap локализации CUR (движение окна тайла)
+
+Симуляция “взгляда агента”: вы двигаете окно `tile_size x tile_size` внутри **фиксированного** crop’а карты, а сеть предсказывает heatmap по всему crop’у, где находится CUR.
+
+```bash
+python navigate_cur_heatmap.py \
+  --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --split test \
+  --model-path cur_localization_net.pt \
+  --index 0 \
+  --step 200
+```
+
+Управление:
+
+- `W/S` или `Up/Down`: вверх/вниз
+- `A/D` или `Left/Right`: влево/вправо
+- `R`: сброс окна на GT CUR
+- `Q` / `Esc`: выход
+
+> Совет: кликните по окну OpenCV, чтобы оно получило фокус клавиатуры.
+
+### 5) Heatmap локализации тайла (нижняя часть)
+
+```bash
+python visualize_tile_localization_heatmap_lower.py \
+  --annotations dataset/annotations_lower_tar.csv \
+  --big-image big_sample5_17.tif \
+  --model-path tile_localization_lower_tar.pt \
+  --index 0 \
+  --save-path viz_tile_lower_heatmap.png
+```
+
+---
+
+## Обучить локализацию тайла (нижняя часть, TAR-only heatmap)
+
+Обучение `TileLocalizationNet` на `dataset/annotations_lower_tar.csv`:
+
+```bash
+python tile_localization_training_lower.py \
+  --annotations dataset/annotations_lower_tar.csv \
+  --big-image big_sample5_17.tif \
+  --map-size 2000 \
+  --tile-size 200 \
+  --batch-size 4 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --save-path tile_localization_lower_tar.pt
+```
+
+Если OOM — снижайте `--batch-size` до `1-2` и ставьте `--num-workers 0`.
+
+### 6) Интерактивная навигация с heatmap (верхняя часть)
+
+```bash
+python navigate_upper_heatmap.py \
+  --annotations dataset/annotations_val_upper_part.csv \
+  --big-image big_sample5_17.tif \
+  --model-path tile_localization_lower_tar.pt \
+  --index 0 \
+  --step 200
+```
 

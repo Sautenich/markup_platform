@@ -38,20 +38,34 @@ def nll_heatmap_loss(logits: torch.Tensor, target_xy: torch.Tensor) -> torch.Ten
     """
     b, _, hf, wf = logits.shape
 
-    # Переводим нормализованные координаты в индексы на feature‑карте.
-    # target_xy[:, 0] — x, target_xy[:, 1] — y.
-    x = target_xy[:, 0] * wf
-    y = target_xy[:, 1] * hf
+    # В текущей постановке "one-hot" цель (одна клетка) слишком жёсткая,
+    # особенно при грубой сетке признаков. Делаем soft-target: 2D Gaussian
+    # вокруг GT и оптимизируем KL(target || softmax(logits)).
+    #
+    # target_xy: нормализованные координаты в [0,1]. Проецируем в [0..Wf-1], [0..Hf-1].
+    x = target_xy[:, 0] * (wf - 1)
+    y = target_xy[:, 1] * (hf - 1)
 
-    x_idx = torch.clamp(x.long(), 0, wf - 1)
-    y_idx = torch.clamp(y.long(), 0, hf - 1)
+    # Сетка координат (1, Hf, Wf)
+    yy, xx = torch.meshgrid(
+        torch.arange(hf, device=logits.device, dtype=torch.float32),
+        torch.arange(wf, device=logits.device, dtype=torch.float32),
+        indexing="ij",
+    )
+    xx = xx.unsqueeze(0)  # (1, Hf, Wf)
+    yy = yy.unsqueeze(0)  # (1, Hf, Wf)
 
-    # Переводим задачу к обычной cross_entropy по Hf*Wf классам.
-    flat_logits = logits.view(b, -1)  # (B, Hf*Wf)
-    linear_idx = (y_idx * wf + x_idx).long()  # (B,)
+    # Центры (B, 1, 1)
+    x0 = x.view(b, 1, 1)
+    y0 = y.view(b, 1, 1)
 
-    # F.cross_entropy сам внутри применяет log_softmax + NLLLoss.
-    loss = F.cross_entropy(flat_logits, linear_idx)
+    sigma = 1.5  # в клетках feature-map; можно вынести в аргументы при желании
+    dist2 = (xx - x0) ** 2 + (yy - y0) ** 2
+    target = torch.exp(-0.5 * dist2 / (sigma**2))  # (B, Hf, Wf)
+    target = target / torch.clamp(target.sum(dim=(1, 2), keepdim=True), min=1e-12)
+
+    log_probs = F.log_softmax(logits.view(b, -1), dim=1).view(b, hf, wf)
+    loss = F.kl_div(log_probs, target, reduction="batchmean")
     return loss
 
 

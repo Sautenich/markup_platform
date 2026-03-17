@@ -116,9 +116,10 @@ def main() -> None:
     h_map, w_map = sat_img.shape[1], sat_img.shape[2]
     h_f, w_f = heatmap_np.shape
 
-    heatmap_np = heatmap_np - heatmap_np.min()
-    if heatmap_np.max() > 0:
-        heatmap_np = heatmap_np / heatmap_np.max()
+    # Softmax уже даёт [0,1]. Min-max нормализация часто "вытягивает" шум.
+    # Для читаемой картинки используем отсечение по перцентилям и масштабирование.
+    lo, hi = np.percentile(heatmap_np, [1.0, 99.5])
+    heatmap_np = np.clip((heatmap_np - lo) / max(hi - lo, 1e-12), 0.0, 1.0)
 
     heatmap_resized = cv2.resize(
         heatmap_np,
