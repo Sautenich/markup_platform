@@ -153,6 +153,28 @@ python cur_localization_training.py \
   --save-path cur_localization_net.pt
 ```
 
+### (Optional) Create CUR-localization annotations from `big_sample5_17.tif` (multi-scale)
+
+If you want to train / navigate on a single big map (`big_sample5_17.tif`), you can generate a NavigationDataset-compatible CSV and (optionally) downsampled map copies for multiple scales:
+
+```bash
+python create_cur_annotations_from_big_tif.py \
+  --big-image big_sample5_17.tif \
+  --map-dir dataset/satellite_maps \
+  --output dataset/annotations_big_cur.csv \
+  --scales 1.0,0.5,0.25 \
+  --samples-per-scale 2000
+```
+
+Then train CUR-localization using the generated CSV:
+
+```bash
+python cur_localization_training.py \
+  --annotations dataset/annotations_big_cur.csv \
+  --map-dir dataset/satellite_maps \
+  --save-path cur_localization_net.pt
+```
+
 **If you hit CUDA OOM (common on 4GB GPUs)**, try smaller batch / fewer workers:
 
 ```bash
@@ -255,6 +277,18 @@ This simulates an “agent view”: you move a `tile_size x tile_size` window ov
 ```bash
 python navigate_cur_heatmap.py \
   --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --split test \
+  --model-path cur_localization_net.pt \
+  --index 0 \
+  --step 200
+```
+
+To use the big-map generated annotations instead:
+
+```bash
+python navigate_cur_heatmap.py \
+  --annotations dataset/annotations_big_cur.csv \
   --map-dir dataset/satellite_maps \
   --split test \
   --model-path cur_localization_net.pt \
@@ -531,6 +565,28 @@ python cur_localization_training.py \
   --save-path cur_localization_net.pt
 ```
 
+### (Опционально) Сгенерировать аннотации CUR из `big_sample5_17.tif` (multi-scale)
+
+Если хотите обучать/навигацировать по одному большому изображению (`big_sample5_17.tif`), можно сгенерировать CSV в формате `NavigationDataset` и (опционально) сохранить downsample-копии карты для разных масштабов:
+
+```bash
+python create_cur_annotations_from_big_tif.py \
+  --big-image big_sample5_17.tif \
+  --map-dir dataset/satellite_maps \
+  --output dataset/annotations_big_cur.csv \
+  --scales 1.0,0.5,0.25 \
+  --samples-per-scale 2000
+```
+
+Дальше обучаем CUR-localization по полученному CSV:
+
+```bash
+python cur_localization_training.py \
+  --annotations dataset/annotations_big_cur.csv \
+  --map-dir dataset/satellite_maps \
+  --save-path cur_localization_net.pt
+```
+
 **Если ловите CUDA OOM (часто на 4GB GPU)**, уменьшите batch и воркеры:
 
 ```bash
@@ -609,6 +665,18 @@ python visualize_cur_localization_heatmap.py \
 ```bash
 python navigate_cur_heatmap.py \
   --annotations dataset/annotations.csv \
+  --map-dir dataset/satellite_maps \
+  --split test \
+  --model-path cur_localization_net.pt \
+  --index 0 \
+  --step 200
+```
+
+Чтобы использовать аннотации, сгенерированные из большого изображения:
+
+```bash
+python navigate_cur_heatmap.py \
+  --annotations dataset/annotations_big_cur.csv \
   --map-dir dataset/satellite_maps \
   --split test \
   --model-path cur_localization_net.pt \

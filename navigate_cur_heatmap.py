@@ -35,8 +35,20 @@ def parse_args() -> argparse.Namespace:
         "--split",
         type=str,
         default="test",
-        choices=["train", "val", "test"],
-        help="Which split to sample from.",
+        choices=["train", "val", "test", "all"],
+        help="Which split to sample from. Use 'all' to use the entire CSV.",
+    )
+    parser.add_argument(
+        "--map-id-prefix",
+        type=str,
+        default="",
+        help="Optional filter: only keep samples whose map_id starts with this prefix (e.g. 'big_sample5_17').",
+    )
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="Optional filter: only keep samples with this scale value (requires 'scale' column in CSV).",
     )
     parser.add_argument(
         "--model-path",
@@ -95,37 +107,78 @@ def main() -> None:
     ds = NavigationDataset(
         csv_file=str(ann_path),
         map_dir=str(map_dir),
-        split=args.split,
+        split=None if args.split == "all" else args.split,
         transform=None,
     )
     if len(ds) == 0:
         raise RuntimeError(f"Split '{args.split}' is empty. Check the 'split' column in {ann_path}.")
 
-    idx = int(np.clip(args.index, 0, len(ds) - 1))
-    sat_img, _cur_tile_gt, _tar_tile, labels = ds[idx]
+    # Build a filtered index list (so N/P navigates within the desired subset).
+    indices = list(range(len(ds)))
+    if args.map_id_prefix:
+        prefixes = tuple(p.strip() for p in args.map_id_prefix.split(",") if p.strip())
+        if prefixes:
+            indices = [
+                i
+                for i in indices
+                if str(ds.annotations.iloc[i]["map_id"]).startswith(prefixes)  # type: ignore[attr-defined]
+            ]
+
+    if args.scale is not None and "scale" in ds.annotations.columns:  # type: ignore[attr-defined]
+        target_scale = float(args.scale)
+        indices = [
+            i
+            for i in indices
+            if abs(float(ds.annotations.iloc[i]["scale"]) - target_scale) < 1e-9  # type: ignore[attr-defined]
+        ]
+
+    if not indices:
+        raise RuntimeError("No samples matched filters (--map-id-prefix/--scale).")
 
     map_size = int(ds.map_size)
     tile_size = int(ds.tile_size)
     half_tile = tile_size // 2
     step = int(args.step)
 
-    # Base crop as PIL (for easy tile cropping)
     to_pil = T.ToPILImage()
-    base_crop = to_pil(sat_img)  # (map_size, map_size)
-
-    # GT CUR center inside crop (pixels)
-    gt_cur_xy = labels["cur_xy"] * map_size
-    gt_x = float(gt_cur_xy[0].item())
-    gt_y = float(gt_cur_xy[1].item())
-
-    # Start agent window at GT (same pattern as navigate_upper_heatmap.py)
-    cur_x = gt_x
-    cur_y = gt_y
 
     # Model + transforms
     transform_pair = build_localization_transforms()
-    base_sat_in, _ = transform_pair(base_crop, base_crop.crop((0, 0, tile_size, tile_size)))
-    base_sat_in = base_sat_in.unsqueeze(0).to(device)
+
+    def load_sample(new_idx: int):
+        nonlocal idx, base_crop, base_sat_in, gt_x, gt_y, cur_x, cur_y, pos_in_subset
+
+        # new_idx is position inside 'indices' (wrap-around navigation)
+        if len(indices) == 0:
+            raise RuntimeError("No indices to load.")
+        pos_in_subset = int(new_idx) % len(indices)
+        idx = indices[pos_in_subset]
+        sat_img, _cur_tile_gt, _tar_tile, labels = ds[idx]
+
+        # Base crop as PIL (for easy tile cropping)
+        base_crop = to_pil(sat_img)  # (map_size, map_size)
+
+        # GT CUR center inside crop (pixels)
+        gt_cur_xy = labels["cur_xy"] * map_size
+        gt_x = float(gt_cur_xy[0].item())
+        gt_y = float(gt_cur_xy[1].item())
+
+        # Start/reset agent window at GT
+        cur_x = gt_x
+        cur_y = gt_y
+
+        # Precompute normalized map tensor once per sample
+        base_sat_in_local, _ = transform_pair(base_crop, base_crop.crop((0, 0, tile_size, tile_size)))
+        base_sat_in = base_sat_in_local.unsqueeze(0).to(device)
+
+    # init first sample
+    idx = 0
+    pos_in_subset = 0
+    base_crop = None  # type: ignore[assignment]
+    base_sat_in = None  # type: ignore[assignment]
+    gt_x = gt_y = 0.0
+    cur_x = cur_y = 0.0
+    load_sample(int(args.index))
 
     model = CurLocalizationNet().to(device)
     if model_path.exists():
@@ -143,6 +196,8 @@ def main() -> None:
         "  W/S or Up/Down    - move tile window vertically inside crop\n"
         "  A/D or Left/Right - move tile window horizontally inside crop\n"
         "  R                 - reset tile window to GT CUR position\n"
+        "  N                 - next tile/sample\n"
+        "  P                 - previous tile/sample\n"
         "  Q or Esc          - quit\n"
     )
 
@@ -235,8 +290,10 @@ def main() -> None:
         cv2.circle(overlay, (peak_x_px, peak_y_px), 6, (0, 255, 255), -1)
 
         # Status text
+        map_id = str(ds.annotations.iloc[idx]["map_id"])  # type: ignore[attr-defined]
         status = (
-            f"split {args.split} | idx {idx}/{len(ds)-1} | "
+            f"split {args.split} | sample {pos_in_subset}/{len(indices)-1} | "
+            f"map_id {map_id} | "
             f"tile center ({cur_x:.1f}, {cur_y:.1f}) | "
             f"peak ({peak_x_px}, {peak_y_px})"
         )
@@ -283,6 +340,10 @@ def main() -> None:
         elif key in (ord("r"), ord("R")):
             cur_x = gt_x
             cur_y = gt_y
+        elif key in (ord("n"), ord("N")):
+            load_sample(pos_in_subset + 1)
+        elif key in (ord("p"), ord("P")):
+            load_sample(pos_in_subset - 1)
 
     cv2.destroyWindow("Navigation CUR Heatmap")
 

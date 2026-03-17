@@ -1,0 +1,6 @@
+sample_id,map_id,map_crop_x,map_crop_y,cur_tile_x,cur_tile_y,tar_tile_x,tar_tile_y,vector_dx,vector_dy,split,scale,source_image
+2,big_sample5_17_s1000_x2000_y0,0,0,620.0,831.0,620.0,831.0,0.0,0.0,val,1.0,big_sample5_17.tif
+5,big_sample5_17_s1000_x5000_y0,0,0,637.0,102.0,637.0,102.0,0.0,0.0,val,1.0,big_sample5_17.tif
+6,big_sample5_17_s1000_x6000_y0,0,0,544.0,126.0,544.0,126.0,0.0,0.0,val,1.0,big_sample5_17.tif
+8,big_sample5_17_s1000_x8000_y0,0,0,117.0,533.0,117.0,533.0,0.0,0.0,val,1.0,big_sample5_17.tif
+26,big_sample5_17_s250_x2000_y1000,0,0,163.0,146.0,163.0,146.0,0.0,0.0,val,0.25,big_sample5_17.tif

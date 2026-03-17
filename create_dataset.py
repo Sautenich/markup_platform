@@ -12,6 +12,10 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 
+# Allow loading very large satellite maps (e.g. big .tif) without Pillow's
+# DecompressionBombError. This dataset is local/offline and expects large images.
+Image.MAX_IMAGE_PIXELS = None
+
 
 # =========================
 # Dataset generation script
