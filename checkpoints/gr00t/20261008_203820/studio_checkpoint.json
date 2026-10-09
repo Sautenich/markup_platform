@@ -1,0 +1,28 @@
+{
+  "mode": "train",
+  "model": "gr00t",
+  "datasets": [
+    "/home/nikita/Skoltech/Work_Oleg/markup_platmorm/datasets/G1_Brainco_GraspOreo_Dataset",
+    "/home/nikita/Skoltech/Work_Oleg/markup_platmorm/datasets/G1_Brainco_GraspOreo_Dataset_test20",
+    "/home/nikita/Skoltech/Work_Oleg/markup_platmorm/datasets/G1_Brainco_PickDoll_Dataset"
+  ],
+  "output_dir": "/home/nikita/Skoltech/Work_Oleg/markup_platmorm/checkpoints/gr00t/20261008_203820",
+  "hyperparameters": {
+    "base_model_path": "nvidia/GR00T-N1.7-3B",
+    "embodiment_tag": "NEW_EMBODIMENT",
+    "modality_config_path": "studio_generic",
+    "max_steps": 10000,
+    "global_batch_size": 64,
+    "learning_rate": 5e-05,
+    "weight_decay": 1e-05,
+    "warmup_ratio": 0.05,
+    "save_steps": 1000,
+    "num_gpus": 1,
+    "dataloader_num_workers": 8
+  },
+  "working_directory": "/home/nikita/Skoltech/Work_Oleg/markup_platmorm",
+  "dry_run": true,
+  "checkpoint": null,
+  "status": "completed",
+  "exit_code": 0
+}

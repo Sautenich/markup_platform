@@ -1,1 +1,0 @@
-python visualize_orb.py --max-features 500 --scale-factor 1.5 --n-levels 6

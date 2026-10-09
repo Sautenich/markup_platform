@@ -1,0 +1,33 @@
+{
+  "state": {
+    "joints": {
+      "start": 0,
+      "end": 26
+    }
+  },
+  "action": {
+    "joints": {
+      "start": 0,
+      "end": 26
+    }
+  },
+  "video": {
+    "camera_0": {
+      "original_key": "observation.images.cam_left_high"
+    },
+    "camera_1": {
+      "original_key": "observation.images.cam_right_high"
+    },
+    "camera_2": {
+      "original_key": "observation.images.cam_left_wrist"
+    },
+    "camera_3": {
+      "original_key": "observation.images.cam_right_wrist"
+    }
+  },
+  "annotation": {
+    "human.task_description": {
+      "original_key": "task_index"
+    }
+  }
+}

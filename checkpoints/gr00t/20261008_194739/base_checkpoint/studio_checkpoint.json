@@ -1,0 +1,6 @@
+{
+  "model": "gr00t",
+  "kind": "base_checkpoint",
+  "base_checkpoint": "nvidia/GR00T-N1.7-3B",
+  "dry_run": true
+}
